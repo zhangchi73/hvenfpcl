@@ -1,0 +1,13 @@
+{
+    "channel_names": {
+        "0": "MRI"
+    },
+    "labels": {
+        "background": 0,
+        "GTV": 1
+    },
+    "numTraining": 221,
+    "file_ending": ".nii.gz",
+    "name": "NPC_yidayi",
+    "description": "Dataset201 - Original IDs"
+}
