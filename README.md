@@ -110,6 +110,6 @@ For questions or collaboration, please contact: `zhangc31@mail.neu.edu.cn`
 
 We thank the authors and contributors of the following open-source projects:
 
-- `nnUNetv2`
-- `devis`
-- `usires`
+- [nnUNetv2](https://github.com/MIC-DKFZ/nnUNet)
+- [devis](https://github.com/Cocofeat/DEviS)
+- [usires](https://github.com/suiannaius/SURE)
