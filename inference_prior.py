@@ -20,9 +20,8 @@ from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 from nnunetv2.inference.sliding_window_prediction import compute_gaussian
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from models.edl_unet import EDL_UNet
+from models.prior_unet import Prior_UNet
 from uncertainty_evaluation import UncertaintyEvaluation
-from utils.augment import apply_perturbation
 
 def string_to_class(path_to_class: str):
     """Resolve a class object from a dotted import path."""
@@ -34,9 +33,9 @@ def string_to_class(path_to_class: str):
         print(f"Failed to resolve class from '{path_to_class}'")
         raise e
 
-class EDLUNetPredictor(nnUNetPredictor):
+class PriorUNetPredictor(nnUNetPredictor):
     """
-    Predictor wrapper for EDL-UNet built on nnU-Net inference utilities.
+    Predictor wrapper for Prior-UNet built on nnU-Net inference utilities.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -59,23 +58,20 @@ class EDLUNetPredictor(nnUNetPredictor):
         preprocessor_class = self.configuration_manager.preprocessor_class
         self.preprocessor = preprocessor_class(verbose=self.verbose_preprocessing)
         
-        print("--- 1b. Loading the custom EDL-UNet model ---")
-        raw_config = self.plans_manager.plans['configurations'][self.configuration_name]
-        arch_kwargs = raw_config['architecture']['arch_kwargs']
-        keys_to_import = raw_config['architecture'].get('_kw_requires_import', [])
-
-        for key in keys_to_import:
-             if arch_kwargs.get(key) and isinstance(arch_kwargs[key], str): 
-                 arch_kwargs[key] = string_to_class(arch_kwargs[key])
+        print("--- 1b. Loading the Prior-UNet model ---")
+        arch_kwargs = self.configuration_manager.network_arch_init_kwargs
+        for key in self.configuration_manager.network_arch_init_kwargs_req_import:
+             if arch_kwargs.get(key): arch_kwargs[key] = string_to_class(arch_kwargs[key])
         
         self.plans_manager.plans['configurations'][self.configuration_name]['architecture']['arch_kwargs'] = arch_kwargs
 
-        self.network = EDL_UNet(
+        self.network = Prior_UNet(
             input_channels=len(self.dataset_json['channel_names']),
-            num_classes=len(self.dataset_json['labels']),
+            num_classes=2,
             plans=self.plans_manager.plans,
             configuration=self.configuration_name,
-            deep_supervision=True
+            deep_supervision=True,
+            debug_mode=False
         )
         
         state_dict = torch.load(model_path, map_location='cpu')
@@ -130,60 +126,38 @@ class EDLUNetPredictor(nnUNetPredictor):
             final_np_array = final_np_array.astype(np.float32)
 
         itk_image = sitk.GetImageFromArray(final_np_array)
-        if 'sitk_stuff' in properties:
-            sitk_stuff = properties['sitk_stuff']
-            itk_image.SetSpacing(sitk_stuff['spacing'])
-            itk_image.SetOrigin(sitk_stuff['origin'])
-            itk_image.SetDirection(sitk_stuff['direction'])
-        elif 'nibabel_stuff' in properties:
-            stuff = properties['nibabel_stuff']
-            if isinstance(stuff, dict):
-                affine = stuff.get('original_affine')
-                if affine is None:
-                    affine = stuff.get('affine')
-            else:
-                affine = stuff
-                
-            if affine is None:
-                print("Warning: found nibabel metadata but no affine matrix; using identity.")
-                affine = np.eye(4)
-
-            spacing = np.linalg.norm(affine[:3, :3], axis=0)
-            origin_ras = affine[:3, 3]
-            origin_lps = [-origin_ras[0], -origin_ras[1], origin_ras[2]]
-            rot_mat = affine[:3, :3] / spacing
-            conv = np.diag([-1., -1., 1.])
-            direction_lps = conv @ rot_mat @ conv
-            
-            itk_image.SetSpacing(spacing.tolist())
-            itk_image.SetOrigin(origin_lps)
-            itk_image.SetDirection(direction_lps.flatten().tolist())
+        if 'nibabel_stuff' in properties:
+            import nibabel as nib
+            affine = properties['nibabel_stuff']['original_affine']
+            if final_np_array.ndim == 4:
+                final_np_array = final_np_array.transpose(1, 2, 3, 0)
+            img = nib.Nifti1Image(final_np_array, affine)
+            nib.save(img, output_path)
         else:
-            spacing = properties.get('itk_spacing', properties.get('spacing', [1.0, 1.0, 1.0]))
-            origin = properties.get('itk_origin', properties.get('origin', [0.0, 0.0, 0.0]))
-            direction = properties.get('itk_direction', properties.get('direction', [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]))
+            itk_image = sitk.GetImageFromArray(final_np_array)
             
-            itk_image.SetSpacing(spacing)
-            itk_image.SetOrigin(origin)
-            itk_image.SetDirection(direction)
-        sitk.WriteImage(itk_image, output_path, True)
+            if 'sitk_stuff' in properties:
+                sitk_stuff = properties['sitk_stuff']
+                itk_image.SetSpacing(sitk_stuff['spacing'])
+                itk_image.SetOrigin(sitk_stuff['origin'])
+                itk_image.SetDirection(sitk_stuff['direction'])
+            else:
+                if 'spacing' in properties: itk_image.SetSpacing(properties['spacing'])
+                if 'itk_spacing' in properties: itk_image.SetSpacing(properties['itk_spacing'])
+                
+                if 'origin' in properties: itk_image.SetOrigin(properties['origin'])
+                elif 'itk_origin' in properties: itk_image.SetOrigin(properties['itk_origin'])
+                
+                if 'direction' in properties: itk_image.SetDirection(properties['direction'])
+                elif 'itk_direction' in properties: itk_image.SetDirection(properties['itk_direction'])
+            
+            sitk.WriteImage(itk_image, output_path, True)
 
-    def predict_case(self, input_path: str, output_folder: str, 
-                     perturb_type: str = 'none', perturb_level: float = 0.0, save_input: bool = False):
+    def predict_case(self, input_path: str, output_folder: str):
         case_name = os.path.basename(input_path).split('.nii')[0]
         try:
             data, _, properties = self.preprocessor.run_case([input_path], None, self.plans_manager, self.configuration_manager, self.dataset_json)
-
-            if perturb_type != 'none':
-                import hashlib
-                file_hash = int(hashlib.sha256(case_name.encode('utf-8')).hexdigest(), 16) % (10**8)
-                data = apply_perturbation(data, perturb_type, perturb_level, seed=file_hash)
-
             data_tensor = torch.from_numpy(data).to(self.device, non_blocking=True).float()
-            
-            if save_input and perturb_type != 'none':
-                input_save_name = f"{case_name}_input_{perturb_type}_{perturb_level}.nii.gz"
-                self._export_tensor_to_nifti(data_tensor.cpu(), properties, os.path.join(output_folder, input_save_name), is_segmentation=False)
             
             evidence = self.predict_logits_from_preprocessed_data(data_tensor).cpu()
             
@@ -194,20 +168,22 @@ class EDLUNetPredictor(nnUNetPredictor):
             
             print(f"\nPost-processing and saving: {case_name}")
             results_to_save = {
-                "seg": (segmentation_mask, True),
-                "prob": (probability_map, False),
+                "seg_prior": (segmentation_mask, True),
+                "prob_prior": (probability_map, False),
+                "evidence_alpha_prior": (alpha, False),
+                "evidence_beta_prior": (beta, False)
             }
             
             
             try:
                 dirichlet_params = torch.cat([beta, alpha], dim=0)
                 au_var, eu_var = UncertaintyEvaluation.calculate_uncertainties(dirichlet_params, method='variance')
-                results_to_save["unc_variance_aleatoric"] = (au_var.unsqueeze(0), False)
-                results_to_save["unc_variance_epistemic"] = (eu_var.unsqueeze(0), False)
+                results_to_save["unc_variance_aleatoric_prior"] = (au_var.unsqueeze(0), False)
+                results_to_save["unc_variance_epistemic_prior"] = (eu_var.unsqueeze(0), False)
 
-                UncertaintyEvaluation.calculate_uncertainties(dirichlet_params, method='entropy')
-                vac_map, _ = UncertaintyEvaluation.calculate_uncertainties(dirichlet_params, method='vacuity')
-                results_to_save["unc_vacuity"] = (vac_map.unsqueeze(0), False)
+                au_ent, eu_ent = UncertaintyEvaluation.calculate_uncertainties(dirichlet_params, method='entropy')
+                results_to_save["unc_entropy_aleatoric_prior"] = (au_ent.unsqueeze(0), False)
+                results_to_save["unc_entropy_epistemic_prior"] = (eu_ent.unsqueeze(0), False)
                 
             except Exception as e: 
                 print(f"Severe error while computing uncertainty (ignored): {e}")
@@ -282,39 +258,32 @@ class EDLUNetPredictor(nnUNetPredictor):
         
         if torch.any(torch.isinf(predicted_logits)) or torch.any(torch.isnan(predicted_logits)):
             raise RuntimeError('Found inf or nan in the prediction array. Inference aborted.')
-        return predicted_logits     
+        return predicted_logits    
     
 def main():
     """
-    Run inference for the baseline EDL model.
+    Run Prior-UNet inference to generate evidence maps for the training set.
     """
-    parser = argparse.ArgumentParser(description="EDL inference script.")
+    parser = argparse.ArgumentParser(description="Prior-UNet inference script for generating evidence maps.")
     default_base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
-    
+
     dataset_name = 'Dataset201_NPC_yidayi'
 
-    default_results_path = os.path.join(default_base_path, 'nnUNet_results', dataset_name, 'EDL_UNet__EDLPlans__3d_fullres__fold0')
-    parser.add_argument('--model_path', type=str, default=os.path.join(default_results_path, 'best_model.pth'))
-    parser.add_argument('--output_folder', type=str, default=os.path.join(default_results_path, 'inference_real_final'))
-    parser.add_argument('--input_folder', type=str, default=os.path.join(default_base_path, 'nnUNet_raw', dataset_name, 'imagesTs'))
+    default_results_path = os.path.join(default_base_path, 'nnUNet_results', dataset_name, 'EDL_UNet_Prior_Teacher_digamma__EDLPlans__3d_fullres__fold0')
+    
+    parser.add_argument('--model_path', type=str, default=os.path.join(default_results_path, 'prior_unet_best.pth'))
+    parser.add_argument('--input_folder', type=str, default=os.path.join(default_base_path, 'nnUNet_raw', dataset_name, 'imagesTr'))
+    parser.add_argument('--output_folder', type=str, default=os.path.join(default_results_path, 'inference_prior_on_trainset'))
     parser.add_argument('--plans_file', type=str, default=os.path.join(default_base_path, 'nnUNet_preprocessed', dataset_name, 'EDLPlans.json'))
     parser.add_argument('--dataset_json', type=str, default=os.path.join(default_base_path, 'nnUNet_preprocessed', dataset_name, 'dataset.json'))
-    parser.add_argument('--perturb_type', type=str, default='none', choices=['none', 'noise', 'blur'])
-    parser.add_argument('--perturb_level', type=float, default=0.0)
-    parser.add_argument('--save_perturbed_input', action='store_true')
-
-
     parser.add_argument('--device', type=str, default='cuda')
     args = parser.parse_args()
-    
-    
-    sitk.ProcessObject.SetGlobalWarningDisplay(False)
 
-    print("--- 1. Initializing the EDL-UNet predictor ---")
+    print("--- 1. Initializing the Prior-UNet predictor ---")
     device = torch.device('cuda' if torch.cuda.is_available() and args.device == 'cuda' else 'cpu')
     os.makedirs(args.output_folder, exist_ok=True)
     
-    predictor = EDLUNetPredictor(
+    predictor = PriorUNetPredictor(
         tile_step_size=0.5,
         use_gaussian=True,
         use_mirroring=False,
@@ -336,10 +305,7 @@ def main():
 
     for file_name in tqdm(test_files, desc="Overall progress"):
         image_path = os.path.join(args.input_folder, file_name)
-        predictor.predict_case(image_path, args.output_folder, 
-                               perturb_type=args.perturb_type, 
-                               perturb_level=args.perturb_level, 
-                               save_input=args.save_perturbed_input)
+        predictor.predict_case(image_path, args.output_folder)
 
     print(f"\n--- Finished processing all images. Results were saved to: {args.output_folder} ---")
 

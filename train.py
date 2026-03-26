@@ -152,7 +152,7 @@ def main():
     output_dir = join(nnUNet_results, dataset_name, f"EDL_UNet{config_suffix}__{args.plans}__{args.config}__fold{args.fold}")
     if local_rank == 0:
         maybe_mkdir_p(output_dir)
-        print(f"输出目录: {output_dir}")
+        print(f"Output directory: {output_dir}")
 
     plans_path = join(nnUNet_preprocessed, dataset_name, args.plans + '.json')
     if not os.path.exists(plans_path):
@@ -177,10 +177,10 @@ def main():
     splits_file = join(nnUNet_preprocessed, dataset_name, 'splits_final.json')
     if not isfile(splits_file) or args.create_splits:
         if local_rank == 0:
-            print(f"splits_final.json 文件不存在或强制创建新的数据划分")
-            print(f"正在创建新的数据集划分...")
+            print("`splits_final.json` does not exist or a new split was requested.")
+            print("Creating a new dataset split...")
             splits = create_splits(nnUNet_preprocessed, dataset_name)
-            print(f"数据集划分已创建并保存到 {splits_file}")
+            print(f"Dataset split created and saved to {splits_file}")
         if is_distributed:
             torch.distributed.barrier()
         if not is_distributed or local_rank > 0:
@@ -205,7 +205,7 @@ def main():
         original_size = len(train_identifiers)
         train_identifiers = train_identifiers[:subset_size]
         if local_rank == 0:
-            print(f"[数据子集] 使用 {args.train_subset_ratio*100:.1f}% 训练数据：{subset_size} 个样本（原始: {original_size}）")
+            print(f"[Data subset] Using {args.train_subset_ratio*100:.1f}% of training data: {subset_size} samples (original: {original_size})")
     
     train_size = count_identifiers(train_identifiers)
     val_size = count_identifiers(val_identifiers)
@@ -219,8 +219,8 @@ def main():
         val_size_per_rank = count_identifiers(val_identifiers_per_rank)
         
         if local_rank == 0:
-            print(f"进程 {rank}/{world_size} 处理 {train_size_per_rank}/{train_size} 个训练样本")
-            print(f"进程 {rank}/{world_size} 处理 {val_size_per_rank}/{val_size} 个验证样本")
+            print(f"Process {rank}/{world_size} handles {train_size_per_rank}/{train_size} training samples")
+            print(f"Process {rank}/{world_size} handles {val_size_per_rank}/{val_size} validation samples")
     else:
         train_identifiers_per_rank = train_identifiers
         val_identifiers_per_rank = val_identifiers
@@ -228,8 +228,8 @@ def main():
         val_size_per_rank = val_size
         
         if local_rank == 0:
-            print(f"单GPU训练 处理 {train_size_per_rank} 个训练样本")
-            print(f"单GPU训练 处理 {val_size_per_rank} 个验证样本")
+            print(f"Single-GPU training handles {train_size_per_rank} training samples")
+            print(f"Single-GPU training handles {val_size_per_rank} validation samples")
 
     dataset_class = infer_dataset_class(preprocessed_data_folder)
 
@@ -263,20 +263,20 @@ def main():
 
         if local_rank == 0:
             if hasattr(args, 'two_stage_training') and args.two_stage_training:
-                print(f"✅ 两阶段训练数据加载：已启用延迟堆叠优化")
-                print(f"   训练阶段: {args.training_stage}")
-                print(f"   GTV标签路径: {preprocessed_data_folder}")
-                print(f"   NP标签路径: {preprocessed_np_folder}")
+                print("Two-stage training data loading: delayed stacking optimization enabled")
+                print(f"   Training stage: {args.training_stage}")
+                print(f"   GTV label path: {preprocessed_data_folder}")
+                print(f"   NP label path: {preprocessed_np_folder}")
                 if args.training_stage == "prior":
-                    print(f"   监督目标: NP软标签（第2个通道）")
+                    print("   Supervision target: NP soft labels (channel 2)")
                 else:
-                    print(f"   监督目标: GTV硬标签（第1个通道）")
-                print(f"   优化策略: 在crop_and_pad之后才堆叠标签（只解压patch，不解压完整体积）")
+                    print("   Supervision target: GTV hard labels (channel 1)")
+                print("   Optimization: stack labels after `crop_and_pad` so only patches are decompressed")
             else:
-                print(f"✅ HVEN数据加载：已启用延迟堆叠优化 (Delayed Stacking Optimization)")
-                print(f"   GTV标签路径: {preprocessed_data_folder}")
-                print(f"   NP标签路径: {preprocessed_np_folder}")
-            print(f"   预期效果: 10-60倍数据加载加速，内存占用减少90%+")
+                print("HVEN data loading: delayed stacking optimization enabled")
+                print(f"   GTV label path: {preprocessed_data_folder}")
+                print(f"   NP label path: {preprocessed_np_folder}")
+            print("   Expected benefit: 10x-60x faster loading with 90%+ lower memory usage")
     else:
         dl_train_dataset = dataset_class(
             preprocessed_data_folder,
@@ -502,29 +502,29 @@ def main():
     val_transforms = TransformAdapter(deterministic_val_transform)
 
     if local_rank == 0:
-        print("✅ 确定性验证已启用:")
-        print(f"  - 训练变换: {len(tr_transforms_composed.transforms)} 个变换（包含随机增强）")
-        print(f"  - 验证变换: 确定性变换（无随机性）")
-        print(f"  - 验证采样: 固定随机种子（确保patch位置固定）")
+        print("Deterministic validation is enabled:")
+        print(f"  - Training transforms: {len(tr_transforms_composed.transforms)} transforms (including random augmentation)")
+        print("  - Validation transforms: deterministic transforms (no randomness)")
+        print("  - Validation sampling: fixed random seed to keep patch locations stable")
 
     if (hasattr(args, 'two_stage_training') and args.two_stage_training):
         DataLoaderClass = HVENDataLoader
         if local_rank == 0:
             if hasattr(args, 'two_stage_training') and args.two_stage_training:
-                print("✅ 使用HVENDataLoader（两阶段训练模式）")
-                print(f"   - 训练阶段: {args.training_stage}")
+                print("Using HVENDataLoader (two-stage training mode)")
+                print(f"   - Training stage: {args.training_stage}")
                 if args.training_stage == "prior":
-                    print("   - 监督目标: NP软标签（第2个通道）")
+                    print("   - Supervision target: NP soft labels (channel 2)")
                 else:
-                    print("   - 监督目标: GTV硬标签（第1个通道）")
+                    print("   - Supervision target: GTV hard labels (channel 1)")
             else:
-                print("✅ 使用HVENDataLoader（延迟堆叠优化版本）")
-            print("   - 性能优化：只解压patch区域，不解压完整3D体积")
-            print("   - 预期加速：10-60倍数据加载速度提升")
+                print("Using HVENDataLoader (delayed stacking version)")
+            print("   - Optimization: only patch regions are decompressed, not full 3D volumes")
+            print("   - Expected speedup: 10x-60x faster data loading")
     else:
         DataLoaderClass = nnUNetDataLoader
         if local_rank == 0:
-            print("✅ 使用标准nnUNetDataLoader")
+            print("Using the standard nnUNetDataLoader")
 
     train_loader = DataLoaderClass(
         dl_train_dataset,
@@ -554,10 +554,10 @@ def main():
     val_size = count_identifiers(val_identifiers)
     
     if local_rank == 0:
-        print(f"每个epoch训练批次数：{num_train_batches_per_epoch}，验证批次数：{num_val_batches}")
+        print(f"Training batches per epoch: {num_train_batches_per_epoch}, validation batches: {num_val_batches}")
 
     if local_rank == 0:
-        print("正在转换plans中的字符串为Python类...")
+        print("Converting string entries in `plans` to Python classes...")
 
     arch_params = plans_manager.plans['configurations'][args.config]['architecture']['arch_kwargs']
     keys_to_import = plans_manager.plans['configurations'][args.config]['architecture']['_kw_requires_import']
@@ -568,10 +568,10 @@ def main():
             try:
                 arch_params[key] = string_to_class(class_path_string)
                 if local_rank == 0:
-                    print(f"成功转换: {key}")
+                    print(f"Converted successfully: {key}")
             except Exception as e:
                 if local_rank == 0:
-                    print(f"转换 {key} 时出错: {e}")
+                    print(f"Error while converting {key}: {e}")
                 dist.destroy_process_group()
                 return
 
@@ -589,9 +589,9 @@ def main():
                 ).to(device)
 
                 if local_rank == 0:
-                    print("使用新的Prior-UNet架构（完全独立）")
-                    print("监督目标：NP软标签（第2个通道）")
-                    print("架构特点：完全独立，无共享编码器")
+                    print("Using the new Prior-UNet architecture (fully independent)")
+                    print("Supervision target: NP soft labels (channel 2)")
+                    print("Architecture: fully independent with no shared encoder")
 
             elif args.training_stage == "posterior":
                 model = HVEN_TWO_STAGE(
@@ -607,11 +607,11 @@ def main():
                 ).to(device)
 
                 if local_rank == 0:
-                    print("使用新的HVEN_TWO_STAGE架构")
-                    print(f"先验网络冻结状态: {args.freeze_prior}")
-                    print("监督目标：GTV硬标签（第1个通道）")
-                    print(f"KL约束权重: {args.lambda_kl_two_stage}")
-                    print("架构特点：完全解耦的两阶段架构")
+                    print("Using the new HVEN_TWO_STAGE architecture")
+                    print(f"Prior network frozen: {args.freeze_prior}")
+                    print("Supervision target: GTV hard labels (channel 1)")
+                    print(f"KL constraint weight: {args.lambda_kl_two_stage}")
+                    print("Architecture: fully decoupled two-stage design")
 
             else:
                 raise ValueError(f"Unknown training stage: {args.training_stage}")
@@ -629,7 +629,7 @@ def main():
         ).to(device)
 
         if local_rank == 0:
-            print("使用标准EDL UNet模型")
+            print("Using the standard EDL UNet model")
     if is_distributed:
         model = DDP(model, device_ids=[local_rank], find_unused_parameters=False)
 
@@ -648,11 +648,11 @@ def main():
             )
             if local_rank == 0:
                 if stage == 1:
-                    print("使用新的TwoStageHVENLoss - 阶段1：先验网络训练")
-                    print("监督目标：NP软标签，无KL约束")
+                    print("Using the new TwoStageHVENLoss - stage 1: prior-network training")
+                    print("Supervision target: NP soft labels, no KL constraint")
                 else:
-                    print("使用新的TwoStageHVENLoss - 阶段2：后验网络训练")
-                    print(f"监督目标：GTV标签，KL权重: {args.lambda_kl_two_stage}")
+                    print("Using the new TwoStageHVENLoss - stage 2: posterior-network training")
+                    print(f"Supervision target: GTV labels, KL weight: {args.lambda_kl_two_stage}")
         else:
             raise ValueError("Legacy loss function logic has been removed.")
 
@@ -668,8 +668,8 @@ def main():
             min_reliability=args.min_reliability
         )
         if local_rank == 0:
-            print(f"F-PCL自蒸馏损失 (修复版): 权重={args.fpcl_loss_weight}, 温度={args.fpcl_temperature}")
-            print(f"  可靠性gamma={args.reliability_gamma}, 最小可靠性={args.min_reliability}")
+            print(f"F-PCL self-distillation loss (fixed version): weight={args.fpcl_loss_weight}, temperature={args.fpcl_temperature}")
+            print(f"  Reliability gamma={args.reliability_gamma}, minimum reliability={args.min_reliability}")
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5, betas=(0.9, 0.95))
     
@@ -692,7 +692,7 @@ def main():
         checkpoint_path = join(output_dir, "best_checkpoint.pth")
         if isfile(checkpoint_path):
             if local_rank == 0:
-                print(f"🔄 正在加载检查点以继续训练: {checkpoint_path}")
+                print(f"Loading checkpoint to resume training: {checkpoint_path}")
 
             checkpoint = torch.load(checkpoint_path, map_location=device)
             if is_distributed:
@@ -710,10 +710,10 @@ def main():
                 best_val_dice = checkpoint['best_val_dice']
 
             if local_rank == 0:
-                print(f"✅ 成功恢复训练进度! 下一个Epoch: {start_epoch+1}, 最佳Loss: {best_val_loss:.4f}, 最佳Dice: {best_val_dice:.4f}")
+                print(f"Successfully restored training state. Next epoch: {start_epoch+1}, best loss: {best_val_loss:.4f}, best Dice: {best_val_dice:.4f}")
         else:
             if local_rank == 0:
-                print(f"⚠️ 未找到检查点 {checkpoint_path}，将从头开始训练。")
+                print(f"Checkpoint {checkpoint_path} was not found. Training will start from scratch.")
     
     
     if local_rank == 0:
@@ -747,14 +747,14 @@ def main():
 
                 if epoch == 0 and batch_idx < 10 and local_rank == 0:
                     data_loading_times.append(data_load_time)
-                    print(f"[性能监控] Batch {batch_idx}: 数据加载耗时 {data_load_time:.3f}秒")
+                    print(f"[Performance monitor] Batch {batch_idx}: data loading took {data_load_time:.3f}s")
 
                 if epoch == 0 and batch_idx == 10 and local_rank == 0 and len(data_loading_times) > 0:
                     avg_load_time = sum(data_loading_times) / len(data_loading_times)
                     print(f"\n{'='*80}")
-                    print(f"✅ 数据加载性能统计（前10个batch平均）:")
-                    print(f"   平均加载时间: {avg_load_time:.3f}秒/batch")
-                    print(f"   最快: {min(data_loading_times):.3f}秒, 最慢: {max(data_loading_times):.3f}秒")
+                    print("Data-loading performance summary (average over the first 10 batches):")
+                    print(f"   Average loading time: {avg_load_time:.3f}s/batch")
+                    print(f"   Fastest: {min(data_loading_times):.3f}s, slowest: {max(data_loading_times):.3f}s")
                     print(f"{'='*80}\n")
                 
                 if torch.is_tensor(batch['data']):
@@ -873,11 +873,11 @@ def main():
 
                 except (ValueError, RuntimeError, torch.cuda.OutOfMemoryError) as loss_error:
                     if local_rank == 0:
-                        print(f"损失计算错误 at epoch {epoch+1}, batch {batch_idx}/{num_train_batches_per_epoch}: {loss_error}")
-                        print(f"跳过这个批次继续训练...")
+                        print(f"Loss computation error at epoch {epoch+1}, batch {batch_idx}/{num_train_batches_per_epoch}: {loss_error}")
+                        print("Skipping this batch and continuing training...")
                         if 'inconsistent tensor size' in str(loss_error):
-                            print("  检测到tensor尺寸不匹配，这通常是由于先验解码器中的上采样尺寸问题")
-                            print("  建议: 检查prior_decoder.py中的torch.cat操作")
+                            print("  Detected a tensor size mismatch, likely caused by upsampling size issues in the prior decoder")
+                            print("  Suggestion: check the `torch.cat` operations in `prior_decoder.py`")
                     torch.cuda.empty_cache()
                     continue
 
@@ -896,10 +896,10 @@ def main():
                 
             except Exception as e:
                 if local_rank == 0:
-                    print(f"训练批次处理错误 at epoch {epoch+1}, batch {batch_idx}/{num_train_batches_per_epoch}:")
-                    print(f"  错误类型: {type(e).__name__}")
-                    print(f"  错误信息: {e}")
-                    print(f"  跳过批次继续训练...")
+                    print(f"Training-batch processing error at epoch {epoch+1}, batch {batch_idx}/{num_train_batches_per_epoch}:")
+                    print(f"  Error type: {type(e).__name__}")
+                    print(f"  Error message: {e}")
+                    print("  Skipping the batch and continuing training...")
                 torch.cuda.empty_cache()
                 continue
 
@@ -993,7 +993,7 @@ def main():
                     
                 except Exception as e:
                     if local_rank == 0:
-                        print(f"验证批次生成错误：{e}")
+                        print(f"Validation-batch generation error: {e}")
                     continue
 
             if val_batch_count > 0:
@@ -1070,7 +1070,7 @@ def main():
            
             if should_validate and local_rank == 0:
                 print(f"\n{'='*80}")
-                print(f"🔍 执行真实验证（滑动窗口推理） - Epoch {epoch+1}")
+                print(f"Running full validation (sliding-window inference) - Epoch {epoch+1}")
                 print(f"{'='*80}")
 
             if should_validate:
@@ -1115,11 +1115,11 @@ def main():
 
                 if local_rank == 0:
                     print(f"\n{'='*80}")
-                    print(f"✅ 真实验证结果 - Epoch {epoch+1}")
+                    print(f"Full validation results - Epoch {epoch+1}")
                     print(f"{'-'*80}")
                     print(f"  True Loss (Main): {true_val_loss:.4f}")
                     print(f"  True Dice:        {true_val_dice:.4f}")
-                    print(f"  (对比) Online Val Loss (Main): {avg_val_main_loss:.4f}")
+                    print(f"  (Reference) Online validation loss (main): {avg_val_main_loss:.4f}")
                     print(f"{'-'*80}")
 
                     train_log[-1]['true_val_loss'] = true_val_loss
@@ -1133,7 +1133,7 @@ def main():
                                 best_val_dice = true_val_dice
                                 should_save = True
                                 if local_rank == 0:
-                                    print(f"\n📈 发现更好的Dice: {true_val_dice:.4f} (之前: {best_val_dice:.4f})")
+                                    print(f"\nFound a better Dice score: {true_val_dice:.4f} (previous: {best_val_dice:.4f})")
                         
                         elif args.training_stage == "posterior":
                             should_save_loss = False
@@ -1141,14 +1141,14 @@ def main():
                                 best_val_loss = true_val_loss
                                 should_save_loss = True
                                 if local_rank == 0:
-                                    print(f"\n📉 发现更低的Loss: {true_val_loss:.4f} (之前: {best_val_loss:.4f})")
+                                    print(f"\nFound a lower loss: {true_val_loss:.4f} (previous: {best_val_loss:.4f})")
 
                             should_save_dice = False
                             if true_val_dice > best_val_dice:
                                 best_val_dice = true_val_dice
                                 should_save_dice = True
                                 if local_rank == 0:
-                                    print(f"\n📈 发现更高的Dice: {true_val_dice:.4f} (之前: {best_val_dice:.4f})")
+                                    print(f"\nFound a higher Dice score: {true_val_dice:.4f} (previous: {best_val_dice:.4f})")
                     else:
                         if true_val_loss < best_val_loss:
                             best_val_loss = true_val_loss
@@ -1161,11 +1161,11 @@ def main():
                             if hasattr(args, 'hven_architecture') and args.hven_architecture =="two_stage_new":
                                 torch.save(model_state, join(output_dir, "prior_unet_best.pth"))
                                 if local_rank == 0:
-                                    print(f"\n🏆 新的最佳Prior-UNet模型已保存（新架构）")
+                                    print("\nSaved a new best Prior-UNet model (new architecture)")
                                     print(f"   Epoch:     {epoch+1}")
                                     print(f"   Loss:      {true_val_loss:.4f}")
                                     print(f"   Dice:      {true_val_dice:.4f}")
-                                    print(f"   路径:      {join(output_dir, 'prior_unet_best.pth')}")
+                                    print(f"   Path:      {join(output_dir, 'prior_unet_best.pth')}")
                             else:
                                 raise ValueError("Legacy model saving logic has been removed.")
 
@@ -1190,11 +1190,11 @@ def main():
                                     save_prior=False
                                 )
                                 if local_rank == 0:
-                                    print(f"\n🏆 新的最佳HVEN_TWO_STAGE模型已保存（基于Loss）")
+                                    print("\nSaved a new best HVEN_TWO_STAGE model (based on loss)")
                                     print(f"   Epoch:     {epoch+1}")
                                     print(f"   Loss:      {true_val_loss:.4f}")
                                     print(f"   Dice:      {true_val_dice:.4f}")
-                                    print(f"   路径:      {join(output_dir, 'hven_two_stage_best.pth')}")
+                                    print(f"   Path:      {join(output_dir, 'hven_two_stage_best.pth')}")
                             else:
                                 raise ValueError("Legacy model saving logic has been removed.")
 
@@ -1218,11 +1218,11 @@ def main():
                                     save_prior=False
                                 )
                                 if local_rank == 0:
-                                    print(f"\n🏆 新的最佳HVEN_TWO_STAGE模型已保存（基于Dice）")
+                                    print("\nSaved a new best HVEN_TWO_STAGE model (based on Dice)")
                                     print(f"   Epoch:     {epoch+1}")
                                     print(f"   Loss:      {true_val_loss:.4f}")
                                     print(f"   Dice:      {true_val_dice:.4f}")
-                                    print(f"   路径:      {join(output_dir, 'hven_two_stage_best_dice.pth')}")
+                                    print(f"   Path:      {join(output_dir, 'hven_two_stage_best_dice.pth')}")
                             else:
                                 raise ValueError("Legacy model saving logic has been removed.")
 
@@ -1240,7 +1240,7 @@ def main():
                         if should_save:
                             torch.save(model_state, join(output_dir, "best_model.pth"))
                             if local_rank == 0:
-                                print(f"\n🏆 新的最佳模型（基于真实验证Main Loss）")
+                                print("\nSaved a new best model based on full-validation main loss")
                                 print(f"   Epoch:     {epoch+1}")
                                 print(f"   Loss:      {true_val_loss:.4f}")
                                 print(f"   Dice:      {true_val_dice:.4f}")

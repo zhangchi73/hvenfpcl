@@ -9,7 +9,6 @@ import sys
 import os
 import math
 
-# 导入现有的损失函数
 try:
     from edl_loss import EvidentialHybridLoss, SoftDiceLoss
 except ImportError:
@@ -19,17 +18,7 @@ except ImportError:
 
 class TwoStageHVENLoss(nn.Module):
     """
-    两阶段HVEN损失函数
-
-    专门为两阶段HVEN架构设计的损失函数：
-    - 阶段1：独立训练先验网络，使用NP标签监督
-    - 阶段2：训练后验网络，使用GTV标签和KL约束
-
-    关键特点：
-    1. 完全解耦的两阶段训练
-    2. 先验网络专注NP解剖学学习
-    3. 后验网络接受先验指导进行GTV分割
-    4. 单向KL约束避免相互干扰
+    Loss used by the two-stage HVEN pipeline.
     """
 
     def __init__(
@@ -48,19 +37,19 @@ class TwoStageHVENLoss(nn.Module):
         **kwargs
     ):
         """
-        初始化两阶段HVEN损失函数
+        Initialize the two-stage HVEN loss.
 
         Args:
-            stage (int): 训练阶段 (1: 先验网络训练, 2: 后验网络训练)
-            lambda_kl (float): KL散度损失权重
-            dice_smooth (float): Dice损失平滑参数
-            dice_weight (float): Dice损失权重
-            nll_weight (float): NLL损失权重
-            deep_supervision_weights (List[float]): 深度监督权重
-            prior_dice_weight (float): 先验网络Dice损失权重
-            prior_nll_weight (float): 先验网络NLL损失权重
-            debug_mode (bool): 调试模式
-            **kwargs: 其他参数
+            stage: Training stage, where 1 trains the prior network and 2 trains the posterior network.
+            lambda_kl: KL loss weight.
+            dice_smooth: Smoothing value for Dice loss.
+            dice_weight: Dice loss weight.
+            nll_weight: NLL loss weight.
+            deep_supervision_weights: Weights for deep supervision outputs.
+            prior_dice_weight: Dice loss weight for the prior network.
+            prior_nll_weight: NLL loss weight for the prior network.
+            debug_mode: Whether to emit debug logs.
+            **kwargs: Extra keyword arguments.
         """
         super(TwoStageHVENLoss, self).__init__()
 
@@ -74,20 +63,14 @@ class TwoStageHVENLoss(nn.Module):
         self.debug_mode = debug_mode
         self.kl_annealing_start = kl_annealing_start
 
-        # 用于保存调试信息
         self.last_dice_loss = None
         self.last_nll_loss = None
         self.last_evidence_prior = None
         self.last_evidence_update = None
         self.last_evidence_final = None
 
-        # 创建基础损失函数
         self.dice_loss = SoftDiceLoss(smooth=dice_smooth, batch_dice=True)
-        
-        # 先验网络专用的软标签Dice Loss
         self.prior_soft_dice_loss = SoftDiceLoss(smooth=dice_smooth, batch_dice=True)
-
-        
 
         if deep_supervision_weights is None:
             self.deep_supervision_weights = [1.0 / (2**i) for i in range(10)]
@@ -108,25 +91,17 @@ class TwoStageHVENLoss(nn.Module):
     ) -> torch.Tensor:
         
         epsilon = 1e-7
-        alpha_prior = evidence_prior + 1.0  # (B, 2, D, H, W)
+        alpha_prior = evidence_prior + 1.0
         S_prior = torch.sum(alpha_prior, dim=1, keepdim=True)
-        
-        # p = alpha / S
         p_prior = alpha_prior / (S_prior + epsilon)
-        
-        # 分离前景概率用于 Dice
         p_prior_foreground = p_prior[:, 1:2, ...]
         dice_loss = self.prior_soft_dice_loss(p_prior_foreground, target_np_soft)
-        # 构造完整的软标签 (B, 2, D, H, W)
         target_bg = 1.0 - target_np_soft
         target_fg = target_np_soft
         target_soft = torch.cat([target_bg, target_fg], dim=1)
-        # 手动计算 Soft Cross Entropy: - sum(y * log(p))
-        # 注意：这里 p 是投影概率
         log_p = torch.log(p_prior + epsilon)
         ce_loss = -torch.sum(target_soft * log_p, dim=1).mean()
-        # 如果 Dice 之前权重是 1.0，这里 CE 权重建议设为 1.0 或 0.5
-        total_loss = dice_loss + nll_weight_prior * ce_loss 
+        total_loss = dice_loss + nll_weight_prior * ce_loss
         return total_loss
 
 
@@ -154,20 +129,17 @@ class TwoStageHVENLoss(nn.Module):
         dice_loss_val = (dice_loss_fg + dice_loss_bg) / 2.0
         self.last_dice_loss = dice_loss_val.item()
 
-        # 将 GTV 标签展平用于 CE 计算
-        # target_gtv shape: [B, 1, D, H, W] -> [B, D, H, W]
         target_gtv_squeeze = target_gtv_clean.squeeze(1).long()
         
         target_gtv_squeeze = torch.clamp(target_gtv_squeeze, min=0) 
         if self.debug_mode and (target_gtv < 0).any():
             print(f"[Auto-Fix] Detected -1 in targets, converted to 0 for loss calculation.")
         
-        # 为了数值稳定，加 epsilon
         log_p = torch.log(p_projected + epsilon)
         
         ce_loss_val = F.nll_loss(log_p, target_gtv_squeeze)
-        
-        self.last_nll_loss = ce_loss_val.item() # 这里借用变量名记录 CE Loss
+
+        self.last_nll_loss = ce_loss_val.item()
 
         total_loss = self.dice_weight * dice_loss_val + self.nll_weight * ce_loss_val
 
@@ -180,26 +152,24 @@ class TwoStageHVENLoss(nn.Module):
         target_np: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        阶段1：先验网络训练损失（使用软标签损失）
+        Stage 1 loss for training the prior network with soft labels.
 
         Args:
-            model_output (Dict): 模型输出，包含 'logits_prior'
-            target_np (torch.Tensor): NP软标签，形状 (B, 1, D, H, W), 值域[0, 1]
+            model_output: Model output containing `logits_prior`.
+            target_np: NP soft labels with shape `(B, 1, D, H, W)` and values in `[0, 1]`.
 
         Returns:
-            Dict[str, torch.Tensor]: 损失字典
+            Loss dictionary.
         """
         if self.debug_mode:
             print("[TwoStageHVENLoss] === Stage 1: Prior Network Training (Soft Labels) ===")
 
         logits_prior = model_output['logits_prior']
 
-        # 确保target_np是单通道格式
         if target_np.shape[1] > 1:
-            target_np = target_np[:, 1:2, ...]  # 取前景通道
+            target_np = target_np[:, 1:2, ...]
 
         if isinstance(logits_prior, list):
-            # 深度监督：计算多个尺度的损失
             total_loss = 0.0
             debug_loss = 0.0
 
@@ -211,22 +181,15 @@ class TwoStageHVENLoss(nn.Module):
                 if ds_weight == 0:
                     continue
 
-                # 下采样目标到当前尺度
                 current_shape = logit.shape[2:]
-                # 对软标签使用 trilinear 插值，保留软边界信息
                 target_np_i = F.interpolate(
                     target_np.float(),
                     size=current_shape,
                     mode='trilinear',
                     align_corners=False
                 )
-                # 确保值域在 [0, 1]
                 target_np_i = torch.clamp(target_np_i, 0.0, 1.0)
-
-                # 将 logit 转换为 evidence
                 evidence_i = F.softplus(logit)
-
-                # 使用新的软标签损失函数
                 loss_i = self._compute_prior_supervision_loss_soft(
                     evidence_i,
                     target_np_i,
@@ -238,7 +201,6 @@ class TwoStageHVENLoss(nn.Module):
                 if i == 0:
                     debug_loss = loss_i
 
-            # 归一化
             norm_factor = sum(self.deep_supervision_weights[:len(logits_prior)])
             if norm_factor > 0:
                 total_loss /= norm_factor
@@ -250,7 +212,6 @@ class TwoStageHVENLoss(nn.Module):
                 'kl_loss': torch.tensor(0.0)
             }
         else:
-            # 单一输出
             current_shape = logits_prior.shape[2:]
             target_np_resized = F.interpolate(
                 target_np.float(),
@@ -283,16 +244,16 @@ class TwoStageHVENLoss(nn.Module):
         total_epochs: int = 500
     ) -> Dict[str, torch.Tensor]:
         """
-        阶段2：后验网络训练损失
+        Stage 2 loss for training the posterior network.
 
         Args:
-            model_output (Dict): 模型输出，包含 'logits_post' 和 'evidence_prior'
-            target_gtv (torch.Tensor): GTV标签，形状 (B, 1, D, H, W)
-            target_np (torch.Tensor): NP标签（可选，用于先验监督）
-            current_epoch (int): 当前训练轮次，用于KL预热
+            model_output: Model output containing `logits_post` and prior evidence.
+            target_gtv: GTV labels with shape `(B, 1, D, H, W)`.
+            target_np: Optional NP labels for prior supervision.
+            current_epoch: Current epoch for schedule control.
 
         Returns:
-            Dict[str, torch.Tensor]: 损失字典
+            Loss dictionary.
         """
         if self.debug_mode:
             print("[TwoStageHVENLoss] === Stage 2: Posterior Network Training ===")
@@ -300,77 +261,52 @@ class TwoStageHVENLoss(nn.Module):
 
         logits_posterior = model_output['logits_post']
         
-        #  优先使用门控后的先验证据
         if 'gated_evidence_prior' in model_output:
-            evidence_prior = model_output['gated_evidence_prior'] # 已经是 Gate * Softplus(Logits)
+            evidence_prior = model_output['gated_evidence_prior']
             if isinstance(evidence_prior, list):
                  evidence_prior_full_res = evidence_prior[0] 
             else:
                  evidence_prior_full_res = evidence_prior
         else:
-            # 兼容旧逻辑
             evidence_prior = model_output['evidence_prior']
 
-        # 确保target_gtv是单通道格式
         if target_gtv.shape[1] > 1:
-            target_gtv = target_gtv[:, 0:1, ...]  # 取前景通道
+            target_gtv = target_gtv[:, 0:1, ...]
         
         current_kl_weight = 0.0
 
-        # 处理深度监督输出
         if not isinstance(logits_posterior, list):
             logits_posterior_list = [logits_posterior]
         else:
             logits_posterior_list = logits_posterior.copy()
 
-        # logits_posterior_list.reverse()  # 从最高分辨率到最低分辨率
-
-        # 处理先验evidence
         if isinstance(evidence_prior, list):
-            evidence_prior_full_res = evidence_prior[0]  # 取最高分辨率
+            evidence_prior_full_res = evidence_prior[0]
         else:
             evidence_prior_full_res = evidence_prior
 
-        # 初始化损失累加器
         total_loss = 0.0
         debug_main_loss = 0.0
         debug_kl_loss = 0.0
 
-        # 深度监督循环
         for i, logits_posterior_i in enumerate(logits_posterior_list):
-            # 添加索引越界保护
             if i < len(self.deep_supervision_weights):
                 ds_weight = self.deep_supervision_weights[i]
             else:
-                ds_weight = self.deep_supervision_weights[-1]  # 使用最后一个权重
+                ds_weight = self.deep_supervision_weights[-1]
             if ds_weight == 0:
                 continue
 
-            # 获取当前尺度的空间维度
             current_shape = logits_posterior_i.shape[2:]
-
-            # 下采样先验evidence到当前尺度
-            evidence_prior_i = F.interpolate(
-                evidence_prior_full_res,
-                size=current_shape,
-                mode='trilinear',
-                align_corners=False
-            )
-
-            # 下采样GTV标签到当前尺度
             target_gtv_i = F.interpolate(
                 target_gtv.float(),
                 size=current_shape,
                 mode='nearest'
             )
 
-            # 1. 获取似然证据
             evidence_post_update = F.softplus(logits_posterior_i)
 
-            # 2. 获取先验证据 (如果是第 0 层，直接用 Gated 的)
             if i == 0 and 'gated_evidence_prior' in model_output:
-                # 使用门控先验
-                # Forward 里已经乘了 Gate，这里只需要除以 T
                 evidence_prior_input = evidence_prior_full_res
             else:
                 evidence_prior_input = F.interpolate(
@@ -379,52 +315,37 @@ class TwoStageHVENLoss(nn.Module):
                     mode='trilinear',
                     align_corners=False)
 
-            # 3. 应用温度 T 
             evidence_prior_scaled = evidence_prior_input / self.prior_temperature
 
-            # 4. 应用先验退火 
-            ramp_duration = 10  # 淡入期持续 10 个 epoch
+            ramp_duration = 10
             start_epoch = self.kl_annealing_start
             end_epoch = start_epoch + ramp_duration
             if current_epoch < start_epoch:
-                # 阶段1: N_post 预热 (权重为0)
                 prior_annealing_weight = 0.0
             elif current_epoch < end_epoch:
-                # 阶段2: 先验 "淡入" (权重 0 -> 1)
                 progress = (current_epoch - start_epoch) / ramp_duration
                 prior_annealing_weight = progress
             else:
-                # 阶段3: 完整HVEN模型 (权重为1)
                 prior_annealing_weight = 1.0
 
             evidence_prior_annealed = evidence_prior_scaled * prior_annealing_weight
 
-            # 5. 最终的后验 Alpha 
-            #    alpha = 1 (Base Prior) + v_prior (Learned Prior) + v_post (Likelihood)
             alpha_posterior_final = 1.0 + evidence_prior_annealed + evidence_post_update
 
-            # 保存证据值供训练脚本使用（仅保存最高分辨率的值）
             if i == 0:
                 self.last_evidence_prior = evidence_prior_annealed
                 self.last_evidence_update = evidence_post_update
                 self.last_evidence_final = alpha_posterior_final
 
-            # Step 4: 主损失只监督最终后验分布（唯一监督信号：GTV标签）
             main_loss_i = self._compute_posterior_main_loss(alpha_posterior_final, target_gtv_i, current_epoch=current_epoch)
-
-            # Step 5: 移除KL损失（先验知识已通过加法注入，无需KL约束）
             kl_loss_i = torch.tensor(0.0, device=main_loss_i.device)
-
-            # Step 6: 总损失只包含主损失
             scale_loss = ds_weight * main_loss_i
             total_loss += scale_loss
 
-            # 记录最高分辨率的损失用于调试
             if i == 0:
                 debug_main_loss = main_loss_i
                 debug_kl_loss = kl_loss_i
 
-        # 归一化总损失
         norm_factor = sum(self.deep_supervision_weights[:len(logits_posterior_list)])
         if norm_factor > 0:
             total_loss /= norm_factor
@@ -432,9 +353,9 @@ class TwoStageHVENLoss(nn.Module):
         return {
             'total_loss': total_loss,
             'main_loss': debug_main_loss,
-            'prior_loss': torch.tensor(0.0),  # 阶段2不训练先验网络
-            'kl_loss': debug_kl_loss,  # 固定为0
-            'lambda_kl': torch.tensor(current_kl_weight)  # 固定为0
+            'prior_loss': torch.tensor(0.0),
+            'kl_loss': debug_kl_loss,
+            'lambda_kl': torch.tensor(current_kl_weight)
         }
 
     def forward(
@@ -447,17 +368,17 @@ class TwoStageHVENLoss(nn.Module):
         **kwargs
     ) -> Dict[str, torch.Tensor]:
         """
-        前向计算损失
+        Forward loss computation entry point.
 
         Args:
-            model_output (Dict): 模型输出
-            target_gtv (torch.Tensor): GTV标签
-            target_np (torch.Tensor): NP标签
-            current_epoch (int): 当前训练轮次
-            **kwargs: 其他参数
+            model_output: Model outputs.
+            target_gtv: GTV labels.
+            target_np: NP labels.
+            current_epoch: Current epoch.
+            **kwargs: Extra keyword arguments.
 
         Returns:
-            Dict[str, torch.Tensor]: 损失字典
+            Loss dictionary.
         """
         if self.stage == 1:
             if target_np is None:
@@ -473,7 +394,7 @@ class TwoStageHVENLoss(nn.Module):
             raise ValueError(f"Invalid stage: {self.stage}. Must be 1 or 2.")
 
     def set_stage(self, stage: int):
-        """设置训练阶段"""
+        """Set the active training stage."""
         if stage not in [1, 2]:
             raise ValueError("Stage must be 1 or 2")
 
@@ -482,5 +403,5 @@ class TwoStageHVENLoss(nn.Module):
             print(f"[TwoStageHVENLoss] Stage changed to {stage}")
 
     def get_current_stage(self) -> int:
-        """获取当前训练阶段"""
+        """Get the active training stage."""
         return self.stage

@@ -2,27 +2,38 @@
 
 Official code for the paper **Conjugate Bayesian Evidential Learning for Uncertainty-Aware NPC Segmentation**.
 
-This repository provides a nnU-Net-v2-based framework for nasopharyngeal carcinoma (NPC) segmentation with uncertainty estimation. In addition to segmentation prediction, the code supports evidential learning, uncertainty decomposition, inference export, and quantitative evaluation of both segmentation quality and calibration.
-
-## Highlights
-
-- Uncertainty-aware NPC segmentation based on evidential learning
-- Support for probability maps and uncertainty map generation during inference
-- Segmentation evaluation with Dice, IoU, HD95, and ASSD
-- Calibration and uncertainty evaluation utilities
-- Two-stage training pipeline for prior/posterior modeling
+This repository provides a nnU-Net-v2-based framework for nasopharyngeal carcinoma (NPC) segmentation with uncertainty estimation.
 
 ## Repository Structure
 
 - `train.py`: model training entry point
 - `inference.py`: inference and export of segmentation, probability, and uncertainty maps
+- `inference_post.py`: HVEN-FPCL posterior inference
+- `inference_post_calibrated.py`: HVEN-FPCL inference with FDAEC calibration
 - `evaluate_segmentation.py`: segmentation metric evaluation
 - `evaluate_calibration.py`: calibration and uncertainty evaluation
 - `uncertainty_evaluation.py`: uncertainty computation utilities
 - `models/`, `losses/`, `nnunetv2/`: model, loss, and framework-related components
 - `data/`: dataset and experiment outputs in nnU-Net-style organization
 
-## Data Organization
+## Usage
+
+### 1. Environment Setup
+
+Recommended environment:
+
+- Python 3.10
+- PyTorch
+- SimpleITK
+- NiBabel
+- SciPy
+- pandas
+- tqdm
+- batchgenerators / batchgeneratorsv2
+
+This project follows the nnU-Net v2 workflow and directory convention.
+
+### 2. Datasets
 
 Please organize the dataset in nnU-Net format:
 
@@ -41,56 +52,64 @@ data/
 
 The example dataset configuration currently included in this repository is `Dataset201_NPC_yidayi`.
 
-## Environment
+Among the datasets used in this project, only the two public Foshan datasets are publicly available:
+[A dataset of primary nasopharyngeal carcinoma MRI with multi-modalities segmentation](https://zenodo.org/records/13131827).
+The remaining datasets are private and are not included in this repository.
 
-Recommended environment:
+### 3. Training
 
-- Python 3.10
-- PyTorch
-- SimpleITK
-- NiBabel
-- SciPy
-- pandas
-- tqdm
-- batchgenerators / batchgeneratorsv2
-
-This project follows the nnU-Net v2 workflow and directory convention.
-
-## Usage
-
-Train:
+Prior network training:
 
 ```bash
-python train.py -d 201 -p EDLPlans -c 3d_fullres -f 0
+python train.py -d 201 --use_two_stage_hven --train_prior_only
 ```
 
-Inference:
+Posterior network training:
 
 ```bash
-python inference.py \
-  --model_path data/nnUNet_results/Dataset201_NPC_yidayi/EDL_UNet__EDLPlans__3d_fullres__fold0/best_model.pth \
-  --input_folder data/nnUNet_raw/Dataset201_NPC_yidayi/imagesTs \
-  --output_folder data/nnUNet_results/Dataset201_NPC_yidayi/EDL_UNet__EDLPlans__3d_fullres__fold0/inference_real_final
+python train.py -d 201 --use_two_stage_hven --freeze_prior --prior_temperature 10.0 --use_fpcl --prior_weights_path data/nnUNet_results/Dataset201_NPC_yidayi/EDL_UNet_Prior_Teacher_digamma__EDLPlans__3d_fullres__fold0/prior_unet_best.pth
 ```
 
-Segmentation evaluation:
+### 4. Inference
+
+HVEN-FPCL:
 
 ```bash
-python evaluate_segmentation.py \
-  --pred_folder data/nnUNet_results/Dataset201_NPC_yidayi/EDL_UNet__EDLPlans__3d_fullres__fold0/inference_real_final \
-  --gt_folder data/nnUNet_raw/Dataset201_NPC_yidayi/labelsTs
+python inference_post.py
 ```
 
-Calibration evaluation:
+HVEN-FPCL + FDAEC:
 
 ```bash
-python evaluate_calibration.py \
-  --pred_folder data/nnUNet_results/Dataset201_NPC_yidayi/EDL_UNet__EDLPlans__3d_fullres__fold0/inference_real_final \
-  --gt_folder data/nnUNet_raw/Dataset201_NPC_yidayi/labelsTs
+python inference_post_calibrated.py
 ```
 
-## Notes
+### 5. Evaluation
 
-- Medical data are not included in this repository.
-- Please prepare your own dataset and preprocessing files before training or inference.
-- Citation information can be added here after the paper is publicly available.
+Segmentation:
+
+```bash
+python evaluate_segmentation.py
+```
+
+Uncertainty:
+
+```bash
+python evaluate_calibration.py
+```
+
+## Citation
+
+Citation information can be added here after the paper is publicly available.
+
+## Contact
+
+For questions or collaboration, please contact: `zhangc31@mail.neu.edu.cn`
+
+## Acknowledgements
+
+We thank the authors and contributors of the following open-source projects:
+
+- `nnUNetv2`
+- `devis`
+- `usires`
