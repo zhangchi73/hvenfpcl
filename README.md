@@ -1,6 +1,6 @@
-# Conjugate Bayesian Evidential Learning for Uncertainty-Aware NPC Segmentation
+# Conjugate Bayesian Evidential Learning for Uncertainty-Aware Nasopharyngeal Carcinoma Segmentation
 
-Official code for the paper **Conjugate Bayesian Evidential Learning for Uncertainty-Aware NPC Segmentation**.
+Official code for the paper **Conjugate Bayesian Evidential Learning for Uncertainty-Aware Nasopharyngeal Carcinoma Segmentation**.
 
 This repository provides a nnU-Net-v2-based framework for nasopharyngeal carcinoma (NPC) segmentation with uncertainty estimation.
 
