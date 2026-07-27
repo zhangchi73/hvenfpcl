@@ -104,7 +104,7 @@ Citation information can be added here after the paper is publicly available.
 
 ## Contact
 
-For questions or collaboration, please contact: `zhangc31@mail.neu.edu.cn`
+For questions or collaboration, please contact: `zhangc31@mails.neu.edu.cn`
 
 ## Acknowledgements
 
